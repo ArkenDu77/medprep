@@ -323,7 +323,7 @@ export default function App(){
       {/* Quick launch (admin) */}
       {isAdmin&&<div className="mp-launch" style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         {[["Médecine",T.med,T.medBg,T.medBorder,"🩺",medC],["Dentaire",T.dent,T.dentBg,T.dentBorder,"🦷",dentC]].map(([sc,col,bg,bd,ic,ar])=>
-          <div key={sc} onClick={()=>startColle(sc)} style={{...crd({flex:1,minWidth:160,cursor:"pointer",padding:14}),background:bg,borderColor:bd,opacity:blocked===sc?.35:1}}>
+          <div key={sc} onClick={()=>startColle(sc)} style={{...crd({flex:1,minWidth:160,cursor:"pointer",padding:14}),background:bg,borderColor:bd,opacity:blocked===sc?0.35:1}}>
             <div style={{fontSize:13,fontWeight:700,color:col}}>{ic} QCM {sc}</div><div style={{fontSize:10,color:T.textSec}}>{ar.length} cours</div>
           </div>)}
       </div>}
