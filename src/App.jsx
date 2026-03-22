@@ -268,7 +268,7 @@ export default function App(){
   if(!user) return(
     <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:font}}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
-      <div style={{...crd({padding:32,width:340}),textAlign:"center"}}>
+      <div style={{...crd({padding:32,width:"90%",maxWidth:340}),textAlign:"center"}}>
         <div style={{fontSize:28,fontWeight:900,color:T.accent,marginBottom:4}}>MedPrep</div>
         <div style={{fontSize:10,color:T.textDim,textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:24}}>Concours Santé</div>
         <input value={loginName} onChange={e=>setLoginName(e.target.value)} placeholder="Votre prénom" style={{...inp,marginBottom:8,textAlign:"center"}}/>
@@ -299,7 +299,7 @@ export default function App(){
     return<div>
       <h1 style={{fontSize:24,fontWeight:800,color:T.text,margin:0}}>Tableau de bord</h1>
       <p style={{color:T.textSec,fontSize:13,margin:"4px 0 16px"}}>Bienvenue {user.name} {isAdmin&&<Badge color={T.accent}>ADMIN</Badge>}</p>
-      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      <div className="mp-stats" style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
         <Stat icon="📝" label="Colles" value={n}/>
         <Stat icon="📈" label="Moy." value={n?`${to20(avg/100*20,20).toFixed(1)}/20`:"—"} color={avg>=60?T.accent:avg>0?T.warn:T.textDim}/>
         <Stat icon="📚" label="Cours" value={courses.length} color={T.info}/>
@@ -317,7 +317,7 @@ export default function App(){
       </div>}
       {blocked&&<div style={{...crd({marginBottom:14,padding:"10px 14px"}),background:T.warnSoft}}><span style={{fontSize:12,color:T.warn,fontWeight:600}}>⚠️ Rotation → {blocked==="Médecine"?"Dentaire":"Médecine"}</span></div>}
       {/* Quick launch (admin) */}
-      {isAdmin&&<div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+      {isAdmin&&<div className="mp-launch" style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         {[["Médecine",T.med,T.medBg,T.medBorder,"🩺",medC],["Dentaire",T.dent,T.dentBg,T.dentBorder,"🦷",dentC]].map(([sc,col,bg,bd,ic,ar])=>
           <div key={sc} onClick={()=>startColle(sc)} style={{...crd({flex:1,minWidth:160,cursor:"pointer",padding:14}),background:bg,borderColor:bd,opacity:blocked===sc?.35:1}}>
             <div style={{fontSize:13,fontWeight:700,color:col}}>{ic} QCM {sc}</div><div style={{fontSize:10,color:T.textSec}}>{ar.length} cours</div>
@@ -371,7 +371,7 @@ export default function App(){
     if(!curColle)return<div style={{textAlign:"center",padding:40,color:T.textDim}}><Dots msg="En attente d'une colle..."/></div>;
     if(results){const r=results;return<div>
       <h1 style={{fontSize:24,fontWeight:800,color:T.text,marginBottom:14}}>Résultats</h1>
-      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      <div className="mp-stats" style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
         <Stat icon="✅" label="Note" value={`${r.my20.toFixed(1)}/20`} color={r.my20>=12?T.accent:T.warn}/>
         <Stat icon="📊" label="Score" value={`${r.myScore.toFixed(1)}/${r.total}`} color={r.myPct>=60?T.accent:T.warn}/>
         <Stat icon="🏆" label="Rang" value={`${r.myRank}e`} color={r.myRank<=10?T.gold:T.text} sub={`/${r.totalStudents}`}/>
@@ -411,7 +411,7 @@ export default function App(){
         </div>
       </div>
       <div style={{height:3,background:T.border,borderRadius:2,marginBottom:6}}><div style={{height:"100%",borderRadius:2,background:T.accent,width:`${(vC/curColle.questions.length)*100}%`,transition:"width .3s"}}/></div>
-      <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:12}}>
+      <div className="mp-qnav" style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:12}}>
         {curColle.questions.map((_,i)=>{const v=validated[curColle.questions[i].id],c=i===curQ;return<div key={i} onClick={()=>setCurQ(i)} style={{width:28,height:28,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,cursor:"pointer",background:c?T.accent:v?`${T.accent}25`:T.card,color:c?T.bg:v?T.accent:T.textDim,border:`1px solid ${c?T.accent:v?`${T.accent}50`:T.border}`}}>{i+1}</div>})}
       </div>
       {q&&<div style={crd({padding:16,marginBottom:10})}>
@@ -496,10 +496,25 @@ export default function App(){
 
   // NAV
   const nav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"courses",l:"Cours",i:"📚"},{id:"colle",l:"Colle",i:"📝"},{id:"ranking",l:"Classement",i:"🏆"},{id:"settings",l:"Paramètres",i:"⚙️"}];
+  const[mobile,setMobile]=useState(window.innerWidth<768);
+  useEffect(()=>{const h=()=>setMobile(window.innerWidth<768);window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h)},[]);
 
-  return<div style={{display:"flex",height:"100vh",fontFamily:font,background:T.bg,color:T.text,overflow:"hidden"}}>
+  return<div style={{display:"flex",flexDirection:mobile?"column":"row",height:"100vh",fontFamily:font,background:T.bg,color:T.text,overflow:"hidden"}}>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
-    <div style={{width:170,flexShrink:0,background:T.surface,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",padding:"12px 8px"}}>
+    <style>{`
+      @media(max-width:767px){
+        .mp-stats{flex-direction:column!important}
+        .mp-stats>div{min-width:auto!important}
+        .mp-qnav>div{width:26px!important;height:26px!important;fontSize:9px!important}
+        .mp-launch{flex-direction:column!important}
+        .mp-launch>div{min-width:auto!important}
+      }
+      input,textarea,button{font-size:16px!important}
+      @media(min-width:768px){input,textarea,button{font-size:13px!important}}
+    `}</style>
+
+    {/* Desktop sidebar */}
+    {!mobile&&<div style={{width:170,flexShrink:0,background:T.surface,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",padding:"12px 8px"}}>
       <div style={{padding:"0 6px",marginBottom:16}}><div style={{fontSize:18,fontWeight:900,color:T.accent,letterSpacing:"-1px"}}>MedPrep</div><div style={{fontSize:8,color:T.textDim,letterSpacing:"1.5px",textTransform:"uppercase"}}>v4 · Partagé</div></div>
       <nav style={{display:"flex",flexDirection:"column",gap:2}}>
         {nav.map(n=>{const a=page===n.id;return<button key={n.id} onClick={()=>setPage(n.id)} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 10px",borderRadius:T.radiusSm,background:a?T.accentBg:"transparent",border:a?`1px solid ${T.accentSoft}`:"1px solid transparent",color:a?T.accent:T.textSec,fontSize:11,fontWeight:a?700:500,cursor:"pointer",fontFamily:font,textAlign:"left"}}><span style={{fontSize:13}}>{n.i}</span>{n.l}</button>})}
@@ -511,8 +526,20 @@ export default function App(){
         {isAdmin&&<div style={{fontSize:9,color:T.accent}}>Admin</div>}
         <button onClick={()=>{setUser(null);sessionStorage.removeItem('mp_admin_key')}} style={{background:"none",border:"none",color:T.textDim,cursor:"pointer",fontSize:10,marginTop:4,padding:0}}>Déconnexion</button>
       </div>
-    </div>
-    <main style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
+    </div>}
+
+    {/* Mobile header */}
+    {mobile&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",background:T.surface,borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+      <div style={{fontSize:16,fontWeight:900,color:T.accent}}>MedPrep</div>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:11,color:T.text,fontWeight:600}}>{user.name}</span>
+        {isAdmin&&<Badge color={T.accent}>ADM</Badge>}
+        <button onClick={()=>{setUser(null);sessionStorage.removeItem('mp_admin_key')}} style={{background:"none",border:"none",color:T.textDim,cursor:"pointer",fontSize:10,padding:0}}>↪</button>
+      </div>
+    </div>}
+
+    {/* Main content */}
+    <main style={{flex:1,overflowY:"auto",padding:mobile?"14px 12px 80px":"18px 22px",WebkitOverflowScrolling:"touch"}}>
       <div style={{maxWidth:800,margin:"0 auto"}}>
         {loading&&<Dots msg="Génération via l'API..."/>}
         {!loading&&page==="dashboard"&&dashPage()}
@@ -522,5 +549,13 @@ export default function App(){
         {!loading&&page==="settings"&&settingsP()}
       </div>
     </main>
+
+    {/* Mobile bottom nav */}
+    {mobile&&<div style={{display:"flex",justifyContent:"space-around",alignItems:"center",padding:"6px 0 env(safe-area-inset-bottom, 6px)",background:T.surface,borderTop:`1px solid ${T.border}`,flexShrink:0,position:"fixed",bottom:0,left:0,right:0,zIndex:100}}>
+      {nav.map(n=>{const a=page===n.id;return<button key={n.id} onClick={()=>setPage(n.id)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 8px",background:"none",border:"none",cursor:"pointer",color:a?T.accent:T.textDim}}>
+        <span style={{fontSize:18}}>{n.i}</span>
+        <span style={{fontSize:8,fontWeight:a?700:500}}>{n.l}</span>
+      </button>})}
+    </div>}
   </div>;
 }
