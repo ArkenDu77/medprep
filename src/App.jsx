@@ -143,21 +143,25 @@ export default function App(){
   const blocked=settings.lastSec&&settings.consec>=2?settings.lastSec:null;
 
   // ═══════ POLLING — sync state every 3s ═══════
+  const curColleRef=useRef(curColle);
+  const resultsRef=useRef(results);
+  useEffect(()=>{curColleRef.current=curColle},[curColle]);
+  useEffect(()=>{resultsRef.current=results},[results]);
+
   const refresh=useCallback(async()=>{
     try{
       const[c,ex,s,h,f]=await Promise.all([api.get("/api/courses"),api.get("/api/examples"),api.get("/api/state"),api.get("/api/history"),api.get("/api/fake-students")]);
       setCourses(c);setExamples(ex);setSt(s);setHist(h);setFe(f);
-      // If there's an active colle and we don't have one locally, load it
-      if(s.activeColle&&!curColle&&!results) setCurColle(s.activeColle);
+      if(s.activeColle&&!curColleRef.current&&!resultsRef.current) setCurColle(s.activeColle);
     }catch(e){console.warn("Poll err",e)}
-  },[curColle,results]);
+  },[]);
 
   useEffect(()=>{
     if(!user)return;
     refresh();
     pollRef.current=setInterval(refresh,3000);
     return()=>clearInterval(pollRef.current);
-  },[user,refresh]);
+  },[user]);
 
   // Exam timer
   useEffect(()=>{if(curColle&&!results){setExamTime(0);examRef.current=setInterval(()=>setExamTime(p=>p+1),1000);return()=>clearInterval(examRef.current)}else clearInterval(examRef.current)},[curColle,results]);
