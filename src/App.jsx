@@ -496,8 +496,8 @@ export default function App(){
 
   // NAV
   const nav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"courses",l:"Cours",i:"📚"},{id:"colle",l:"Colle",i:"📝"},{id:"ranking",l:"Classement",i:"🏆"},{id:"settings",l:"Paramètres",i:"⚙️"}];
-  const[mobile,setMobile]=useState(window.innerWidth<768);
-  useEffect(()=>{const h=()=>setMobile(window.innerWidth<768);window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h)},[]);
+  const[mobile,setMobile]=useState(false);
+  useEffect(()=>{const h=()=>setMobile(window.innerWidth<768);h();window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h)},[]);
 
   return<div style={{display:"flex",flexDirection:mobile?"column":"row",height:"100vh",fontFamily:font,background:T.bg,color:T.text,overflow:"hidden"}}>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
