@@ -1,0 +1,20 @@
+# render.yaml — deploy config for Render.com
+services:
+  - type: web
+    name: medprep
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: NODE_VERSION
+        value: 20.11.0
+    disk:
+      name: medprep-data
+      mountPath: /opt/render/project/src
+      sizeGB: 1
