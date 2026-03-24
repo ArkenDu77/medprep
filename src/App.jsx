@@ -205,6 +205,7 @@ export default function App(){
   const[contestLoading,setContestLoading]=useState(null);
   const[contestResults,setContestResults]=useState({});
   const[corrOverrides,setCorrOverrides]=useState({});
+  const[savedColles,setSavedColles]=useState([]);
   // Import
   const[impTitle,setImpTitle]=useState("");
   const[impText,setImpText]=useState("");
@@ -234,8 +235,8 @@ export default function App(){
 
   const refresh=useCallback(async()=>{
     try{
-      const[c,ex,s,h,f]=await Promise.all([api.get("/api/courses"),api.get("/api/examples"),api.get("/api/state"),api.get("/api/history"),api.get("/api/fake-students")]);
-      setCourses(c);setExamples(ex);setSt(s);setHist(h);setFe(f);
+      const[c,ex,s,h,f,sc]=await Promise.all([api.get("/api/courses"),api.get("/api/examples"),api.get("/api/state"),api.get("/api/history"),api.get("/api/fake-students"),api.get("/api/saved-colles")]);
+      setCourses(c);setExamples(ex);setSt(s);setHist(h);setFe(f);setSavedColles(sc);
       if(s.activeColle&&!curColleRef.current&&!resultsRef.current) setCurColle(s.activeColle);
     }catch(e){console.warn("Poll err",e)}
   },[]);
@@ -290,8 +291,11 @@ export default function App(){
       alert("Génération impossible.");setLoading(false);return;
     }
     const colle={id:`col_${Date.now()}`,section:sec,courseIds:sel.map(c=>c.id),questions:qs,type:ebc?"EBC":"QCM",createdAt:Date.now()};
-    // Save to server so everyone sees it
-    if(isAdmin) await api.post("/api/colle/active",{colle});
+    // Save colle to server (for reuse + shared)
+    if(isAdmin){
+      await api.post("/api/colle/active",{colle});
+      await api.post("/api/saved-colles",{id:colle.id,section:colle.section,type:colle.type,courseIds:colle.courseIds,questions:colle.questions});
+    }
     setCurColle(colle);setCurAns({});setQrocAns({});setValidated({});setCurQ(0);setResults(null);setPage("colle");
     // Update rotation
     if(isAdmin){
@@ -340,7 +344,22 @@ export default function App(){
     const q=curColle?.questions.find(x=>x.id===qId);
     const current=corrOverrides[qId]||q?.correctAnswers||[];
     const next=current.includes(optIdx)?current.filter(i=>i!==optIdx):[...current,optIdx];
-    setCorrOverrides(p=>({...p,[qId]:next}));
+    const newOverrides={...corrOverrides,[qId]:next};
+    setCorrOverrides(newOverrides);
+    // Auto-recalc
+    if(curColle&&results){
+      let myS=0;
+      curColle.questions.forEach(qq=>{
+        const cr=newOverrides[qq.id]||qq.correctAnswers||[];
+        if(qq.type==="QCM"){const sl=curAns[qq.id]||[];let er=0;(qq.options||[]).forEach((_,i)=>{if(cr.includes(i)!==sl.includes(i))er++});myS+=scoreQ(er)}
+        else{const a=(qrocAns[qq.id]||"").trim().toLowerCase(),e=(qq.answer||qq.expectedAnswer||"").trim().toLowerCase();myS+=(a&&(a===e||a.includes(e)||e.includes(a)))?1:0}
+      });
+      const myP=curColle.questions.length>0?(myS/curColle.questions.length)*100:0;
+      const my20=to20(myS,curColle.questions.length);
+      const ranking=results.ranking.map(r=>r.isMe?{...r,score:myS,pct:myP,note20:my20}:r).sort((a,b)=>b.pct-a.pct);
+      const myRank=ranking.findIndex(r=>r.isMe)+1;
+      setResults(prev=>({...prev,myScore:myS,myPct:myP,my20,myRank,ranking}));
+    }
   };
 
   const recalcScore=()=>{
@@ -445,6 +464,26 @@ export default function App(){
         {myHist.slice(0,8).map((h,i)=><div key={i} style={{...crd({marginBottom:4,padding:"8px 12px"}),display:"flex",alignItems:"center",gap:8}}>
           <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:T.text}}>{h.type} · {to20(h.score,h.total).toFixed(1)}/20</div><div style={{fontSize:10,color:T.textDim}}>{new Date(h.timestamp).toLocaleString("fr-FR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</div></div>
           <SecTag s={h.section}/><span style={{fontSize:14,fontWeight:800,color:h.percentage>=60?T.accent:T.warn}}>{to20(h.score,h.total).toFixed(1)}</span>
+        </div>)}
+      </div>}
+      {/* Saved colles */}
+      {savedColles.length>0&&<div style={{marginTop:14}}>
+        <h3 style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:8}}>📦 Colles sauvegardées</h3>
+        {savedColles.map(sc=><div key={sc.id} style={{...crd({marginBottom:4,padding:"8px 12px"}),display:"flex",alignItems:"center",gap:8}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.text}}>{sc.type} — {sc.section}</div>
+            <div style={{fontSize:10,color:T.textDim}}>{new Date(sc.createdAt).toLocaleString("fr-FR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</div>
+          </div>
+          <SecTag s={sc.section}/>
+          <Btn v="secondary" sx={{fontSize:10,padding:"4px 10px"}} onClick={async()=>{
+            const full=await api.get(`/api/saved-colles/${sc.id}`);
+            if(full.questions){
+              const colle={id:`redo_${Date.now()}`,section:full.section,courseIds:full.courseIds,questions:full.questions,type:full.type,createdAt:Date.now()};
+              if(isAdmin) await api.post("/api/colle/active",{colle});
+              setCurColle(colle);setCurAns({});setQrocAns({});setValidated({});setCurQ(0);setResults(null);setCorrOverrides({});setContestResults({});setPage("colle");
+            }
+          }}>Refaire</Btn>
+          {isAdmin&&<button onClick={async()=>{if(confirm("Supprimer cette colle ?")){await api.del(`/api/saved-colles/${sc.id}`);refresh()}}} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",fontSize:12}}>🗑</button>}
         </div>)}
       </div>}
     </div>;
