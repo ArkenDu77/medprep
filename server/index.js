@@ -222,7 +222,7 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 app.post('/api/generate', async (req, res) => {
   if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: 'No API key' });
-  const { messages, max_tokens = 4000 } = req.body;
+  const { messages, max_tokens = 8000 } = req.body;
   try {
     const content = messages[0]?.content || '';
     const splitIdx = content.lastIndexOf('\n\nGénère exactement');
