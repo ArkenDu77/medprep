@@ -29,6 +29,7 @@ async function initDB() {
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT, isAdmin INTEGER DEFAULT 0, createdAt INTEGER);
     CREATE TABLE IF NOT EXISTS colle_results (id INTEGER PRIMARY KEY AUTOINCREMENT, colleId TEXT, userId TEXT, userName TEXT, section TEXT, type TEXT, score REAL, total INTEGER, percentage REAL, timestamp INTEGER);
     CREATE TABLE IF NOT EXISTS fake_students (id TEXT PRIMARY KEY, data TEXT);
+    CREATE TABLE IF NOT EXISTS saved_colles (id TEXT PRIMARY KEY, section TEXT, type TEXT, courseIds TEXT, questions TEXT, createdAt INTEGER);
   `);
   const count = await db.execute('SELECT COUNT(*) as c FROM fake_students');
   if (count.rows[0].c === 0) {
@@ -91,6 +92,12 @@ app.get('/api/history',async(q,r)=>{const x=await db.execute('SELECT * FROM coll
 
 app.get('/api/fake-students',async(q,r)=>{const x=await db.execute('SELECT data FROM fake_students');r.json(x.rows.map(row=>JSON.parse(row.data)))});
 app.post('/api/fake-students/update',async(q,r)=>{const{students}=q.body;await db.batch(students.map(s=>({sql:'UPDATE fake_students SET data=? WHERE id=?',args:[JSON.stringify(s),s.id]})));r.json({ok:true})});
+
+// Saved colles
+app.get('/api/saved-colles',async(q,r)=>{const x=await db.execute('SELECT id,section,type,courseIds,createdAt FROM saved_colles ORDER BY createdAt DESC');r.json(x.rows)});
+app.get('/api/saved-colles/:id',async(q,r)=>{const x=await db.execute({sql:'SELECT * FROM saved_colles WHERE id=?',args:[q.params.id]});if(x.rows.length===0)return r.status(404).json({error:'Not found'});const row=x.rows[0];r.json({...row,questions:JSON.parse(row.questions),courseIds:JSON.parse(row.courseIds)})});
+app.post('/api/saved-colles',async(q,r)=>{if(!isAdm(q))return r.status(403).json({error:'Admin only'});const{id,section,type,courseIds,questions}=q.body;await db.execute({sql:'INSERT OR REPLACE INTO saved_colles(id,section,type,courseIds,questions,createdAt) VALUES(?,?,?,?,?,?)',args:[id,section,type,JSON.stringify(courseIds),JSON.stringify(questions),Date.now()]});r.json({ok:true})});
+app.delete('/api/saved-colles/:id',async(q,r)=>{if(!isAdm(q))return r.status(403).json({error:'Admin only'});await db.execute({sql:'DELETE FROM saved_colles WHERE id=?',args:[q.params.id]});r.json({ok:true})});
 
 const MODEL=process.env.OPENAI_MODEL||'gpt-4o-mini';
 app.post('/api/generate',async(q,r)=>{
