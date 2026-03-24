@@ -27,66 +27,71 @@ function loadPdf(){return new Promise((res,rej)=>{if(pdfOk&&window.pdfjsLib)retu
 async function pdfText(file){const lib=await loadPdf();const buf=await file.arrayBuffer();const pdf=await lib.getDocument({data:buf}).promise;let t="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const c=await pg.getTextContent();t+=c.items.map(x=>x.str).join(" ")+"\n\n"}return t.trim()}
 
 // ═══════════ QCM GENERATION ═══════════
-function splitIntoSections(text, title) {
-  // Split course into logical sections by paragraphs/headers
+function splitIntoSections(text) {
   const chunks = text.split(/\n{2,}|\r\n{2,}/).filter(c => c.trim().length > 30);
   if (chunks.length === 0) return [{ num: 1, text: text.substring(0, 3000) }];
   return chunks.map((c, i) => ({ num: i + 1, text: c.trim().substring(0, 500) }));
 }
 
-async function generateQuestions(courses, type, section, numQ, examples, corrections) {
-  // Build course content with NUMBERED SECTIONS for full coverage
-  const allSections = [];
+async function generateQuestions(courses, type, section, numQ, examples, corrections, difficulty) {
+  numQ = Math.max(15, numQ); // minimum 15 questions
+  const diff = difficulty || 'medium';
   const courseTexts = courses.map(c => {
-    const sections = splitIntoSections(c.content, c.title);
-    sections.forEach(s => allSections.push({ ...s, courseId: c.id, courseTitle: c.title }));
-    const numbered = sections.map(s => `[SECTION ${s.num}] ${s.text}`).join("\n\n");
-    return `=== COURS: ${c.title} (${c.id}) — ${sections.length} sections ===\n${numbered}`;
+    const sections = splitIntoSections(c.content);
+    return `=== COURS: ${c.title} (${c.id}) — ${sections.length} sections ===\n${sections.map(s => `[SECTION ${s.num}] ${s.text}`).join("\n\n")}`;
   }).join("\n\n");
-
-  // Truncate if too long but keep section structure
-  const maxChars = 12000;
-  const txt = courseTexts.length > maxChars ? courseTexts.substring(0, maxChars) + "\n[...suite tronquée]" : courseTexts;
-
+  const txt = courseTexts.length > 12000 ? courseTexts.substring(0, 12000) + "\n[...tronqué]" : courseTexts;
   let ex = "";
   if (examples?.length || corrections?.length) {
     ex = "\n\n====== MODÈLES QCM (IMITE CE FORMAT) ======\n";
-    examples?.forEach((e, i) => { ex += `\n--- QCM ${i + 1} ---\n${e.content.substring(0, 2000)}\n`; });
-    corrections?.forEach((c, i) => { ex += `\n--- CORRECTION ${i + 1} ---\n${c.content.substring(0, 2000)}\n`; });
+    examples?.forEach((e, i) => { ex += `\n--- QCM ${i+1} ---\n${e.content.substring(0, 2000)}\n`; });
+    corrections?.forEach((c, i) => { ex += `\n--- CORRECTION ${i+1} ---\n${c.content.substring(0, 2000)}\n`; });
     ex += "\n====== FIN ======\n";
   }
   const isQ = type === "QROC";
-  const totalSections = allSections.length;
-  const sys = `Tu es un professeur santé expert LAS 2 en ${section === "Médecine" ? "médecine" : "odontologie"}.
+  const diffRules = diff === 'easy' ? `DIFFICULTÉ FACILE: Questions très directes sur les éléments fondamentaux du cours. Aucune ambiguïté. Reprends les définitions et concepts de base.`
+    : diff === 'hard' ? `DIFFICULTÉ DIFFICILE: Détails très précis, nuances, exceptions, chiffres exacts, conditions spécifiques du cours. Pièges UNIQUEMENT basés sur des différences réelles dans le texte du cours (un mot, un chiffre, une condition).`
+    : `DIFFICULTÉ MOYENNE: Mélange éléments importants et détails du cours. Questions claires mais demandant une bonne connaissance.`;
 
-RÈGLES ABSOLUES:
+  const sys = `Tu es un générateur de QCM pour des études de médecine/odontologie LAS 2.
+
+RÈGLE FONDAMENTALE ABSOLUE:
+Tout ce que tu produis doit provenir UNIQUEMENT du cours fourni, en reprenant STRICTEMENT la formulation du cours.
+Aucune reformulation libre. Aucune interprétation. Aucune simplification. Chaque mot compte.
+
+INTERDICTIONS STRICTES:
+- Interdiction d'utiliser des connaissances externes
+- Interdiction de reformuler le cours
+- Interdiction d'interpréter ou déduire une information non explicitement écrite
+- Interdiction de simplifier une phrase du cours
+- Interdiction de modifier la formulation originale
+Tu dois COPIER FIDÈLEMENT les phrases ou segments du cours pour construire les questions et propositions.
+
+${diffRules}
+
+RÈGLES DE CONSTRUCTION:
 1. JSON valide UNIQUEMENT. Pas de markdown, pas de backticks.
-2. 5 items (A-E) par question QCM. Chaque item UNIQUE et DIFFÉRENT des autres items de la même question ET des items des autres questions.
+2. Exactement 5 propositions (A-E) par question.
 3. De 1 à 5 bonnes réponses par question. Varie le nombre.
-4. Pas de "aucune de ces propositions" ni "toutes sont correctes".
-5. Varie: "Parmi...","Concernant...cochez la/les exacte(s)","Quelle(s) FAUSSE(S)".
+4. Chaque proposition = fragment EXACT du cours (copié mot à mot) ou modification SUBTILE d'un fragment (1 mot changé pour créer un faux).
+5. Les 5 items doivent être TOUS DIFFÉRENTS entre eux ET différents des items des autres questions.
+6. Pas de "aucune de ces propositions" ni "toutes sont correctes".
+7. COUVRE TOUTES LES SECTIONS du cours. Au moins 1 question par section. Max 3 par section.
 
-COUVERTURE OBLIGATOIRE DU COURS ENTIER:
-- Le cours est découpé en ${totalSections} SECTIONS numérotées.
-- Tu DOIS poser au moins 1 question sur CHAQUE section du cours.
-- Répartis les ${numQ} questions uniformément sur toutes les sections.
-- INTERDIT de poser plus de 3 questions sur la même section.
-- Chaque question doit porter sur une notion DIFFÉRENTE.
+CORRECTION OBLIGATOIRE:
+Pour chaque question, "explanation" doit contenir:
+- UNIQUEMENT les propositions où l'erreur est subtile
+- La CITATION EXACTE (mot à mot, entre guillemets) du passage du cours qui prouve pourquoi c'est vrai ou faux
+- Format: "Section X: «citation exacte mot à mot du cours»"
 
-FIDÉLITÉ AU COURS:
-- JAMAIS interpréter ni inventer. Reprends la FORMULATION EXACTE du cours.
-- Items corrects = phrases tirées DIRECTEMENT du cours.
-- Items incorrects = modifications subtiles (mot changé, valeur inversée).
-- AUCUN item ne doit être identique ou quasi-identique à un item d'une autre question.
-
-CORRECTION:
-- "explanation" = citation EXACTE du passage du cours. Format: "Section X — «citation»"
+Si une information n'est pas clairement dans le cours: ne pas créer de question dessus.
 ${isQ ? "\nQROC = réponse 1-4 mots MAXIMUM." : ""}
 ${ex ? "\nIMITE EXACTEMENT le style des exemples/corrections fournis." : ""}
 
-FORMAT: {"questions":[${isQ ? `{"type":"QROC","courseId":"ID","question":"...","answer":"1-4 mots","difficulty":0.5,"explanation":"Section X — «citation»"}` : `{"type":"QCM","courseId":"ID","question":"...","options":["A) ...","B) ...","C) ...","D) ...","E) ..."],"correctAnswers":[0,2],"difficulty":0.5,"explanation":"Section X — «citation»"}`}]}`;
+FORMAT JSON:
+{"questions":[${isQ ? `{"type":"QROC","courseId":"ID","question":"...","answer":"1-4 mots","difficulty":"${diff}","explanation":"Section X: «citation»"}` : `{"type":"QCM","courseId":"ID","question":"...","options":["A) copie exacte cours","B) copie exacte cours","C) modification subtile","D) copie exacte cours","E) modification subtile"],"correctAnswers":[0,1,3],"difficulty":"${diff}","explanation":"Section X: «citation exacte mot à mot»"}`}]}`;
 
-  const user = `Génère exactement ${numQ} ${isQ ? "QROC" : type === "EBC" ? "QCM EBC" : "QCM"} pour ${section}. COUVRE TOUTES LES SECTIONS du cours.\n\n${txt}${ex}\n\nJSON uniquement.`;
+  const user = `Génère exactement ${numQ} ${isQ ? "QROC" : type === "EBC" ? "QCM EBC" : "QCM"} de difficulté ${diff} pour ${section}. COUVRE TOUTES LES SECTIONS.\n\n${txt}${ex}\n\nJSON uniquement.`;
   try {
     const r = await api.post("/api/generate", { messages: [{ role: "user", content: `${sys}\n\n${user}` }], max_tokens: 8000 });
     const t = r.content?.map(i => i.text || "").join("") || "";
@@ -94,6 +99,27 @@ FORMAT: {"questions":[${isQ ? `{"type":"QROC","courseId":"ID","question":"...","
     if (p.questions?.length) return p.questions.map((q, i) => ({ ...q, id: `g_${Date.now()}_${i}`, section, courseId: q.courseId || courses[0]?.id, options: q.options?.map((o, j) => ({ label: String.fromCharCode(65 + j), text: typeof o === "string" ? o.replace(/^[A-E]\)\s*/, "") : o })) }));
     return [];
   } catch (e) { console.error(e); return []; }
+}
+
+// ═══════════ CONTEST AGENT — ask why an item is wrong/right ═══════════
+async function contestItem(question, optionIdx, optionText, isCorrect, courseContent) {
+  const sys = `Tu es un correcteur d'examen médical. Un étudiant conteste la correction d'un item de QCM.
+RÈGLE ABSOLUE: Base ta réponse UNIQUEMENT sur le cours fourni. Cite le passage EXACT du cours (mot à mot, entre guillemets).
+Si le cours ne contient pas l'information nécessaire pour trancher, dis-le clairement.
+Si l'étudiant a raison et que la correction est fausse, dis-le clairement aussi.
+Réponds en 2-3 phrases maximum. Sois précis et cite le cours.`;
+  const user = `QUESTION: ${question.question}
+ITEM CONTESTÉ: ${String.fromCharCode(65 + optionIdx)}) ${optionText}
+CORRECTION ACTUELLE: Cet item est marqué comme ${isCorrect ? "VRAI (bonne réponse)" : "FAUX (mauvaise réponse)"}
+L'étudiant demande: Pourquoi cet item est-il ${isCorrect ? "vrai" : "faux"} ?
+
+COURS:\n${courseContent.substring(0, 4000)}
+
+Cite le passage EXACT du cours qui justifie. Si la correction est erronée, dis-le.`;
+  try {
+    const r = await api.post("/api/generate", { messages: [{ role: "user", content: `${sys}\n\n${user}` }], max_tokens: 500 });
+    return r.content?.map(i => i.text || "").join("") || "Erreur de génération.";
+  } catch { return "Erreur de connexion."; }
 }
 
 // ═══════════ FAKE STUDENT SIM ═══════════
@@ -147,6 +173,9 @@ export default function App(){
   const[examTime,setExamTime]=useState(0);
   const[results,setResults]=useState(null);
   const[loading,setLoading]=useState(false);
+  const[difficulty,setDifficulty]=useState("medium");
+  const[contestLoading,setContestLoading]=useState(null); // "qid_optidx"
+  const[contestResults,setContestResults]=useState({}); // "qid_optidx" → "response text"
   // Import
   const[impTitle,setImpTitle]=useState("");
   const[impText,setImpText]=useState("");
@@ -223,11 +252,11 @@ export default function App(){
     const pool=cid?courses.filter(c=>c.id===cid):courses.filter(c=>c.section===sec);
     if(!pool.length){alert("Aucun cours.");return}
     const sel=cid?pool:pool.sort(()=>Math.random()-0.5).slice(0,Math.min(settings.nCourses||3,pool.length));
-    const numQ=ebc?50:18+Math.floor(Math.random()*3);
+    const numQ=ebc?50:Math.max(15,18+Math.floor(Math.random()*3));
     setLoading(true);
     const exs=examples.filter(e=>e.section===sec&&e.type==="example");
     const corrs=examples.filter(e=>e.section===sec&&e.type==="correction");
-    let qs=await generateQuestions(sel,ebc?"EBC":"QCM",sec,numQ,exs,corrs);
+    let qs=await generateQuestions(sel,ebc?"EBC":"QCM",sec,numQ,exs,corrs,difficulty);
     if(!qs.length){
       alert("Génération impossible.");setLoading(false);return;
     }
@@ -413,12 +442,27 @@ export default function App(){
         <Stat icon="📊" label="Score" value={`${r.myScore.toFixed(1)}/${r.total}`} color={r.myPct>=60?T.accent:T.warn}/>
         <Stat icon="🏆" label="Rang" value={`${r.myRank}e`} color={r.myRank<=10?T.gold:T.text} sub={`/${r.totalStudents}`}/>
       </div>
-      <h3 style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>Correction</h3>
+      <h3 style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>Correction <span style={{fontSize:10,color:T.textDim,fontWeight:400}}>— cliquez sur un item pour demander pourquoi</span></h3>
       {curColle.questions.map((q,idx)=>{const sl=curAns[q.id]||[],cr=q.correctAnswers||[];return<div key={q.id} style={crd({marginBottom:5,padding:10})}>
         <div style={{fontSize:10,color:T.textDim,marginBottom:2}}>Q{idx+1}</div>
         <div style={{fontSize:12,fontWeight:600,color:T.text,marginBottom:6}}>{q.question}</div>
-        {q.type==="QCM"&&q.options?.map((o,i)=>{const ok=cr.includes(i),pk=sl.includes(i);return<div key={i} style={{padding:"4px 8px",marginBottom:2,borderRadius:T.radiusSm,border:`1px solid ${ok?T.accent+"40":pk?T.danger+"40":T.border}`,background:ok?`${T.accent}12`:pk?`${T.danger}12`:"transparent",display:"flex",gap:6,fontSize:11}}>
-          <span style={{fontWeight:700,color:ok?T.accent:pk?T.danger:T.textDim}}>{o.label}</span><span style={{color:T.text,flex:1}}>{o.text}</span>{ok&&<span style={{color:T.accent}}>✓</span>}{pk&&!ok&&<span style={{color:T.danger}}>✗</span>}
+        {q.type==="QCM"&&q.options?.map((o,i)=>{const ok=cr.includes(i),pk=sl.includes(i),cKey=`${q.id}_${i}`;return<div key={i}>
+          <div onClick={async()=>{
+            if(contestResults[cKey]||contestLoading===cKey)return;
+            setContestLoading(cKey);
+            const courseData=courses.find(c=>c.id===q.courseId);
+            const resp=await contestItem(q,i,o.text,ok,courseData?.content||"");
+            setContestResults(p=>({...p,[cKey]:resp}));
+            setContestLoading(null);
+          }} style={{padding:"4px 8px",marginBottom:contestResults[cKey]?0:2,borderRadius:T.radiusSm,border:`1px solid ${ok?T.accent+"40":pk?T.danger+"40":T.border}`,background:ok?`${T.accent}12`:pk?`${T.danger}12`:"transparent",display:"flex",gap:6,fontSize:11,cursor:"pointer",transition:"all .15s"}}>
+            <span style={{fontWeight:700,color:ok?T.accent:pk?T.danger:T.textDim}}>{o.label}</span><span style={{color:T.text,flex:1}}>{o.text}</span>
+            {ok&&<span style={{color:T.accent}}>✓</span>}{pk&&!ok&&<span style={{color:T.danger}}>✗</span>}
+            <span style={{color:T.textDim,fontSize:9}}>❓</span>
+          </div>
+          {contestLoading===cKey&&<div style={{padding:"6px 10px",fontSize:10,color:T.textSec}}>⏳ Analyse en cours...</div>}
+          {contestResults[cKey]&&<div style={{padding:"6px 10px",marginBottom:2,borderRadius:T.radiusSm,background:`${T.warn}08`,borderLeft:`2px solid ${T.warn}`,fontSize:10,color:T.text,lineHeight:1.5}}>
+            <span style={{fontWeight:700,color:T.warn}}>🔍 Analyse :</span> {contestResults[cKey]}
+          </div>}
         </div>})}
         {q.type==="QROC"&&<div style={{fontSize:11}}><span style={{color:T.textSec}}>Vous: </span><span style={{color:T.warn}}>{qrocAns[q.id]||"(vide)"}</span> → <span style={{color:T.accent}}>{q.answer||q.expectedAnswer}</span></div>}
         {q.explanation&&<div style={{marginTop:6,padding:"8px 10px",borderRadius:T.radiusSm,background:`${T.info}10`,borderLeft:`3px solid ${T.info}`}}>
@@ -505,6 +549,10 @@ export default function App(){
         <label style={{fontSize:10,color:T.textSec,display:"block",marginBottom:3}}>Section</label>
         <div style={{display:"flex",gap:6}}>
           {["Médecine","Dentaire"].map(s=><button key={s} onClick={async()=>{await setServerState('settings',{...settings,section:s});refresh()}} style={{...bst(settings.section===s?(s==="Médecine"?"med":"dent"):"secondary"),fontSize:11,padding:"6px 14px"}}>{s}</button>)}
+        </div>
+        <label style={{fontSize:10,color:T.textSec,display:"block",marginBottom:3,marginTop:10}}>Difficulté QCM</label>
+        <div style={{display:"flex",gap:6}}>
+          {[["easy","🟢 Facile"],["medium","🟡 Moyen"],["hard","🔴 Difficile"]].map(([v,l])=><button key={v} onClick={()=>setDifficulty(v)} style={{...bst(difficulty===v?"primary":"secondary"),fontSize:11,padding:"6px 12px"}}>{l}</button>)}
         </div>
       </div>
       <div style={crd({marginBottom:12})}>
