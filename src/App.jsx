@@ -47,7 +47,7 @@ RÈGLE: Base-toi UNIQUEMENT sur le texte du cours. Si un item reprend fidèlemen
 Réponds UNIQUEMENT en JSON: {"corrections":[{"q":0,"correctAnswers":[0,1,3],"explanation":"citation du cours"},{"q":1,"correctAnswers":[2],"explanation":"citation"},...]}
 q = index de la question (0-based). correctAnswers = les VRAIS indices corrects après vérification. Inclus TOUTES les questions, même celles qui ne changent pas.`;
 
-  const user = `COURS:\n${courseText.substring(0, 6000)}\n\nQCM À VÉRIFIER:\n${qSummary}\n\nJSON uniquement.`;
+  const user = `COURS COMPLET (lis TOUT attentivement):\n${courseText}\n\nQCM À VÉRIFIER:\n${qSummary}\n\nJSON uniquement.`;
   try {
     const r = await api.post("/api/generate", { messages: [{ role: "user", content: `${sys}\n\n${user}` }], max_tokens: 4000 });
     const t = r.content?.map(i => i.text || "").join("") || "";
@@ -64,7 +64,7 @@ async function generateQuestions(courses, type, section, numQ, examples, correct
     const sections = splitIntoSections(c.content);
     return `=== COURS: ${c.title} (${c.id}) — ${sections.length} sections ===\n${sections.map(s => `[SECTION ${s.num}] ${s.text}`).join("\n\n")}`;
   }).join("\n\n");
-  const txt = courseTexts.length > 12000 ? courseTexts.substring(0, 12000) + "\n[...tronqué]" : courseTexts;
+  const txt = courseTexts.length > 30000 ? courseTexts.substring(0, 30000) + "\n[...tronqué]" : courseTexts;
   let ex = "";
   if (examples?.length || corrections?.length) {
     ex = "\n\n====== MODÈLES QCM (IMITE CE FORMAT) ======\n";
@@ -92,6 +92,13 @@ CONSTRUCTION DES ITEMS:
 - Items FAUX = MÊME phrase du cours MAIS avec UNE modification (un mot remplacé, un chiffre changé, une condition inversée)
 - L'étudiant doit pouvoir retrouver la justification de CHAQUE item (vrai ou faux) dans le cours
 - Exemple: si le cours dit "Le pH salivaire normal est de 7.2", un item faux serait "Le pH salivaire normal est de 6.8"
+
+INTERDICTION DE RÉPÉTITION:
+- CHAQUE item de CHAQUE question doit être UNIQUE dans tout le QCM
+- INTERDIT de réutiliser la même phrase ou notion dans plusieurs questions
+- INTERDIT de reformuler un item déjà utilisé dans une autre question
+- Avant de créer un item, vérifie qu'il n'existe pas déjà dans une autre question
+- Si 2 items se ressemblent même vaguement, supprime l'un et crée-en un nouveau sur une AUTRE partie du cours
 
 ${diffRules}
 
@@ -133,17 +140,25 @@ ${ex ? "IMITE le style des exemples fournis." : ""}`;
 
 // ═══════════ CONTEST AGENT — manual check ═══════════
 async function contestItem(question, optionIdx, optionText, isCorrect, courseContent) {
-  const sys = `Tu es un correcteur d'examen médical. Un étudiant conteste un item.
-RÈGLE: Base-toi UNIQUEMENT sur le cours. Cite le passage EXACT (mot à mot, entre guillemets).
-Si le cours ne contient pas l'info pour trancher, dis-le.
-Si l'étudiant a raison et la correction est fausse, dis-le CLAIREMENT: "La correction est erronée. L'item est en réalité [VRAI/FAUX]."
-Réponds en 2-3 phrases. Sois précis.`;
+  const sys = `Tu es un correcteur d'examen médical ultra-rigoureux. Un étudiant te demande pourquoi un item est marqué vrai ou faux.
+
+MÉTHODE:
+1. Lis le COURS COMPLET attentivement
+2. Cherche le passage EXACT qui correspond à l'item
+3. Compare MOT À MOT l'item avec le cours
+4. Si l'item reprend fidèlement le cours → il est VRAI
+5. Si l'item modifie un mot/chiffre/condition du cours → il est FAUX
+6. Si tu ne trouves PAS l'information dans le cours → dis "Information non trouvée dans le cours fourni"
+
+IMPORTANT: Ne dis "La correction est erronée" QUE si tu as trouvé le passage exact dans le cours qui PROUVE que la correction est fausse. Cite ce passage entre guillemets.
+Si tu n'es pas sûr, dis "Je ne trouve pas cette information dans le cours fourni, la correction pourrait être incorrecte."
+Réponds en 2-3 phrases. Cite toujours le passage exact du cours.`;
   const user = `QUESTION: ${question.question}
 ITEM: ${String.fromCharCode(65+optionIdx)}) ${optionText}
 CORRECTION ACTUELLE: marqué ${isCorrect?"VRAI":"FAUX"}
 Pourquoi cet item est-il ${isCorrect?"vrai":"faux"} ?
 
-COURS:\n${courseContent.substring(0,4000)}`;
+COURS COMPLET (lis TOUT le cours avant de répondre):\n${courseContent}`;
   try {
     const r = await api.post("/api/generate",{messages:[{role:"user",content:`${sys}\n\n${user}`}],max_tokens:500});
     return r.content?.map(i=>i.text||"").join("")||"Erreur.";
