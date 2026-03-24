@@ -33,8 +33,32 @@ function splitIntoSections(text) {
   return chunks.map((c, i) => ({ num: i + 1, text: c.trim().substring(0, 500) }));
 }
 
+async function verifyCorrections(questions, courseText) {
+  // 2nd API call: verify each question's correctAnswers against the course
+  const qSummary = questions.map((q, i) => {
+    const opts = q.options?.map((o, j) => `${o.label}) ${o.text}`).join("\n") || "";
+    const correct = (q.correctAnswers || []).map(j => String.fromCharCode(65 + j)).join(",");
+    return `Q${i + 1}: ${q.question}\n${opts}\nRéponses marquées correctes: ${correct}`;
+  }).join("\n\n");
+
+  const sys = `Tu es un vérificateur de QCM médical. On te donne des QCM et le cours source.
+TRAVAIL: Pour CHAQUE question, vérifie que les réponses marquées correctes sont VRAIMENT correctes selon le cours, et que les réponses marquées fausses sont VRAIMENT fausses.
+RÈGLE: Base-toi UNIQUEMENT sur le texte du cours. Si un item reprend fidèlement le cours, il est VRAI. Si un item contredit le cours (même d'un seul mot), il est FAUX.
+Réponds UNIQUEMENT en JSON: {"corrections":[{"q":0,"correctAnswers":[0,1,3],"explanation":"citation du cours"},{"q":1,"correctAnswers":[2],"explanation":"citation"},...]}
+q = index de la question (0-based). correctAnswers = les VRAIS indices corrects après vérification. Inclus TOUTES les questions, même celles qui ne changent pas.`;
+
+  const user = `COURS:\n${courseText.substring(0, 6000)}\n\nQCM À VÉRIFIER:\n${qSummary}\n\nJSON uniquement.`;
+  try {
+    const r = await api.post("/api/generate", { messages: [{ role: "user", content: `${sys}\n\n${user}` }], max_tokens: 4000 });
+    const t = r.content?.map(i => i.text || "").join("") || "";
+    const p = JSON.parse(t.replace(/```json|```/g, "").trim());
+    if (p.corrections?.length) return p.corrections;
+    return null;
+  } catch { return null; }
+}
+
 async function generateQuestions(courses, type, section, numQ, examples, corrections, difficulty) {
-  numQ = Math.max(15, numQ); // minimum 15 questions
+  numQ = Math.max(15, numQ);
   const diff = difficulty || 'medium';
   const courseTexts = courses.map(c => {
     const sections = splitIntoSections(c.content);
@@ -49,76 +73,80 @@ async function generateQuestions(courses, type, section, numQ, examples, correct
     ex += "\n====== FIN ======\n";
   }
   const isQ = type === "QROC";
-  const diffRules = diff === 'easy' ? `DIFFICULTÉ FACILE: Questions très directes sur les éléments fondamentaux du cours. Aucune ambiguïté. Reprends les définitions et concepts de base.`
-    : diff === 'hard' ? `DIFFICULTÉ DIFFICILE: Détails très précis, nuances, exceptions, chiffres exacts, conditions spécifiques du cours. Pièges UNIQUEMENT basés sur des différences réelles dans le texte du cours (un mot, un chiffre, une condition).`
-    : `DIFFICULTÉ MOYENNE: Mélange éléments importants et détails du cours. Questions claires mais demandant une bonne connaissance.`;
+  const diffRules = diff === 'easy' ? `FACILE: Questions directes sur les fondamentaux. Aucune ambiguïté.`
+    : diff === 'hard' ? `DIFFICILE: Détails précis, chiffres exacts, exceptions. Pièges = modification d'UN mot d'une phrase du cours.`
+    : `MOYEN: Mélange fondamentaux et détails. Bonne connaissance requise.`;
 
-  const sys = `Tu es un générateur de QCM pour des études de médecine/odontologie LAS 2.
+  const sys = `Tu es un générateur de QCM pour médecine/odontologie LAS 2.
 
-RÈGLE FONDAMENTALE ABSOLUE:
-Tout ce que tu produis doit provenir UNIQUEMENT du cours fourni, en reprenant STRICTEMENT la formulation du cours.
-Aucune reformulation libre. Aucune interprétation. Aucune simplification. Chaque mot compte.
+RÈGLE FONDAMENTALE: Tout provient UNIQUEMENT du cours fourni. COPIE FIDÈLE. Zéro reformulation. Zéro interprétation.
 
-INTERDICTIONS STRICTES:
-- Interdiction d'utiliser des connaissances externes
-- Interdiction de reformuler le cours
-- Interdiction d'interpréter ou déduire une information non explicitement écrite
-- Interdiction de simplifier une phrase du cours
-- Interdiction de modifier la formulation originale
-Tu dois COPIER FIDÈLEMENT les phrases ou segments du cours pour construire les questions et propositions.
+INTERDICTIONS:
+- JAMAIS utiliser de connaissances externes
+- JAMAIS reformuler ni interpréter le cours
+- JAMAIS inventer un item qui n'a aucun rapport avec le cours
+- JAMAIS créer de piège basé sur des connaissances hors cours
+
+CONSTRUCTION DES ITEMS:
+- Items VRAIS = copies EXACTES de phrases du cours (mot à mot)
+- Items FAUX = MÊME phrase du cours MAIS avec UNE modification (un mot remplacé, un chiffre changé, une condition inversée)
+- L'étudiant doit pouvoir retrouver la justification de CHAQUE item (vrai ou faux) dans le cours
+- Exemple: si le cours dit "Le pH salivaire normal est de 7.2", un item faux serait "Le pH salivaire normal est de 6.8"
 
 ${diffRules}
 
-RÈGLES DE CONSTRUCTION:
-1. JSON valide UNIQUEMENT. Pas de markdown, pas de backticks.
-2. Exactement 5 propositions (A-E) par question.
-3. De 1 à 5 bonnes réponses par question. Varie le nombre.
-4. Chaque proposition = fragment EXACT du cours (copié mot à mot) ou modification SUBTILE d'un fragment (1 mot changé pour créer un faux).
-5. Les 5 items doivent être TOUS DIFFÉRENTS entre eux ET différents des items des autres questions.
-6. Pas de "aucune de ces propositions" ni "toutes sont correctes".
-7. COUVRE TOUTES LES SECTIONS du cours. Au moins 1 question par section. Max 3 par section.
+RÈGLES:
+1. JSON valide UNIQUEMENT
+2. 5 items (A-E) par question. De 1 à 5 bonnes réponses. Varie.
+3. Items TOUS DIFFÉRENTS. Pas de "aucune" ni "toutes correctes".
+4. COUVRE TOUTES LES SECTIONS. Min 1 question par section. Max 3.
+5. Pour chaque item FAUX, "explanation" doit indiquer quel mot a été changé et citer le passage original du cours
 
-CORRECTION OBLIGATOIRE:
-Pour chaque question, "explanation" doit contenir:
-- UNIQUEMENT les propositions où l'erreur est subtile
-- La CITATION EXACTE (mot à mot, entre guillemets) du passage du cours qui prouve pourquoi c'est vrai ou faux
-- Format: "Section X: «citation exacte mot à mot du cours»"
+FORMAT: {"questions":[${isQ ? `{"type":"QROC","courseId":"ID","question":"...","answer":"1-4 mots","difficulty":"${diff}","explanation":"«citation cours»"}` : `{"type":"QCM","courseId":"ID","question":"...","options":["A) phrase exacte du cours","B) phrase exacte du cours","C) phrase du cours avec 1 mot modifié","D) phrase exacte du cours","E) phrase du cours avec 1 mot modifié"],"correctAnswers":[0,1,3],"difficulty":"${diff}","explanation":"Pour chaque item faux: mot modifié → mot original. Citation: «passage exact du cours»"}`}]}
+${isQ ? "QROC = 1-4 mots MAX." : ""}
+${ex ? "IMITE le style des exemples fournis." : ""}`;
 
-Si une information n'est pas clairement dans le cours: ne pas créer de question dessus.
-${isQ ? "\nQROC = réponse 1-4 mots MAXIMUM." : ""}
-${ex ? "\nIMITE EXACTEMENT le style des exemples/corrections fournis." : ""}
-
-FORMAT JSON:
-{"questions":[${isQ ? `{"type":"QROC","courseId":"ID","question":"...","answer":"1-4 mots","difficulty":"${diff}","explanation":"Section X: «citation»"}` : `{"type":"QCM","courseId":"ID","question":"...","options":["A) copie exacte cours","B) copie exacte cours","C) modification subtile","D) copie exacte cours","E) modification subtile"],"correctAnswers":[0,1,3],"difficulty":"${diff}","explanation":"Section X: «citation exacte mot à mot»"}`}]}`;
-
-  const user = `Génère exactement ${numQ} ${isQ ? "QROC" : type === "EBC" ? "QCM EBC" : "QCM"} de difficulté ${diff} pour ${section}. COUVRE TOUTES LES SECTIONS.\n\n${txt}${ex}\n\nJSON uniquement.`;
+  const user = `Génère exactement ${numQ} ${isQ ? "QROC" : type === "EBC" ? "QCM EBC" : "QCM"} difficulté ${diff} pour ${section}. COUVRE TOUTES LES SECTIONS.\n\n${txt}${ex}\n\nJSON uniquement.`;
   try {
     const r = await api.post("/api/generate", { messages: [{ role: "user", content: `${sys}\n\n${user}` }], max_tokens: 8000 });
     const t = r.content?.map(i => i.text || "").join("") || "";
     const p = JSON.parse(t.replace(/```json|```/g, "").trim());
-    if (p.questions?.length) return p.questions.map((q, i) => ({ ...q, id: `g_${Date.now()}_${i}`, section, courseId: q.courseId || courses[0]?.id, options: q.options?.map((o, j) => ({ label: String.fromCharCode(65 + j), text: typeof o === "string" ? o.replace(/^[A-E]\)\s*/, "") : o })) }));
-    return [];
+    if (!p.questions?.length) return [];
+
+    let qs = p.questions.map((q, i) => ({ ...q, id: `g_${Date.now()}_${i}`, section, courseId: q.courseId || courses[0]?.id, options: q.options?.map((o, j) => ({ label: String.fromCharCode(65 + j), text: typeof o === "string" ? o.replace(/^[A-E]\)\s*/, "") : o })) }));
+
+    // AUTO-VERIFICATION: 2nd API call to check corrections
+    const fullCourse = courses.map(c => c.content).join("\n\n");
+    const verified = await verifyCorrections(qs, fullCourse);
+    if (verified) {
+      verified.forEach(v => {
+        if (v.q >= 0 && v.q < qs.length && Array.isArray(v.correctAnswers)) {
+          qs[v.q].correctAnswers = v.correctAnswers;
+          if (v.explanation) qs[v.q].explanation = v.explanation;
+        }
+      });
+    }
+
+    return qs;
   } catch (e) { console.error(e); return []; }
 }
 
-// ═══════════ CONTEST AGENT — ask why an item is wrong/right ═══════════
+// ═══════════ CONTEST AGENT — manual check ═══════════
 async function contestItem(question, optionIdx, optionText, isCorrect, courseContent) {
-  const sys = `Tu es un correcteur d'examen médical. Un étudiant conteste la correction d'un item de QCM.
-RÈGLE ABSOLUE: Base ta réponse UNIQUEMENT sur le cours fourni. Cite le passage EXACT du cours (mot à mot, entre guillemets).
-Si le cours ne contient pas l'information nécessaire pour trancher, dis-le clairement.
-Si l'étudiant a raison et que la correction est fausse, dis-le clairement aussi.
-Réponds en 2-3 phrases maximum. Sois précis et cite le cours.`;
+  const sys = `Tu es un correcteur d'examen médical. Un étudiant conteste un item.
+RÈGLE: Base-toi UNIQUEMENT sur le cours. Cite le passage EXACT (mot à mot, entre guillemets).
+Si le cours ne contient pas l'info pour trancher, dis-le.
+Si l'étudiant a raison et la correction est fausse, dis-le CLAIREMENT: "La correction est erronée. L'item est en réalité [VRAI/FAUX]."
+Réponds en 2-3 phrases. Sois précis.`;
   const user = `QUESTION: ${question.question}
-ITEM CONTESTÉ: ${String.fromCharCode(65 + optionIdx)}) ${optionText}
-CORRECTION ACTUELLE: Cet item est marqué comme ${isCorrect ? "VRAI (bonne réponse)" : "FAUX (mauvaise réponse)"}
-L'étudiant demande: Pourquoi cet item est-il ${isCorrect ? "vrai" : "faux"} ?
+ITEM: ${String.fromCharCode(65+optionIdx)}) ${optionText}
+CORRECTION ACTUELLE: marqué ${isCorrect?"VRAI":"FAUX"}
+Pourquoi cet item est-il ${isCorrect?"vrai":"faux"} ?
 
-COURS:\n${courseContent.substring(0, 4000)}
-
-Cite le passage EXACT du cours qui justifie. Si la correction est erronée, dis-le.`;
+COURS:\n${courseContent.substring(0,4000)}`;
   try {
-    const r = await api.post("/api/generate", { messages: [{ role: "user", content: `${sys}\n\n${user}` }], max_tokens: 500 });
-    return r.content?.map(i => i.text || "").join("") || "Erreur de génération.";
+    const r = await api.post("/api/generate",{messages:[{role:"user",content:`${sys}\n\n${user}`}],max_tokens:500});
+    return r.content?.map(i=>i.text||"").join("")||"Erreur.";
   } catch { return "Erreur de connexion."; }
 }
 
@@ -174,8 +202,9 @@ export default function App(){
   const[results,setResults]=useState(null);
   const[loading,setLoading]=useState(false);
   const[difficulty,setDifficulty]=useState("medium");
-  const[contestLoading,setContestLoading]=useState(null); // "qid_optidx"
-  const[contestResults,setContestResults]=useState({}); // "qid_optidx" → "response text"
+  const[contestLoading,setContestLoading]=useState(null);
+  const[contestResults,setContestResults]=useState({});
+  const[corrOverrides,setCorrOverrides]=useState({});
   // Import
   const[impTitle,setImpTitle]=useState("");
   const[impText,setImpText]=useState("");
@@ -306,6 +335,28 @@ export default function App(){
   };
 
   const toggle=(qid,oidx)=>{setCurAns(p=>{const c=p[qid]||[];return{...p,[qid]:c.includes(oidx)?c.filter(i=>i!==oidx):[...c,oidx]}});setValidated(p=>{const n={...p};delete n[qid];return n})};
+
+  const flipItem=(qId,optIdx)=>{
+    const q=curColle?.questions.find(x=>x.id===qId);
+    const current=corrOverrides[qId]||q?.correctAnswers||[];
+    const next=current.includes(optIdx)?current.filter(i=>i!==optIdx):[...current,optIdx];
+    setCorrOverrides(p=>({...p,[qId]:next}));
+  };
+
+  const recalcScore=()=>{
+    if(!curColle||!results)return;
+    let myS=0;
+    curColle.questions.forEach(q=>{
+      const cr=corrOverrides[q.id]||q.correctAnswers||[];
+      if(q.type==="QCM"){const sl=curAns[q.id]||[];let er=0;(q.options||[]).forEach((_,i)=>{if(cr.includes(i)!==sl.includes(i))er++});myS+=scoreQ(er)}
+      else{const a=(qrocAns[q.id]||"").trim().toLowerCase(),e=(q.answer||q.expectedAnswer||"").trim().toLowerCase();myS+=(a&&(a===e||a.includes(e)||e.includes(a)))?1:0}
+    });
+    const myP=curColle.questions.length>0?(myS/curColle.questions.length)*100:0;
+    const my20=to20(myS,curColle.questions.length);
+    const ranking=results.ranking.map(r=>r.isMe?{...r,score:myS,pct:myP,note20:my20}:r).sort((a,b)=>b.pct-a.pct);
+    const myRank=ranking.findIndex(r=>r.isMe)+1;
+    setResults(prev=>({...prev,myScore:myS,myPct:myP,my20,myRank,ranking}));
+  };
 
   // File upload
   const handleFile=async e=>{
@@ -442,31 +493,28 @@ export default function App(){
         <Stat icon="📊" label="Score" value={`${r.myScore.toFixed(1)}/${r.total}`} color={r.myPct>=60?T.accent:T.warn}/>
         <Stat icon="🏆" label="Rang" value={`${r.myRank}e`} color={r.myRank<=10?T.gold:T.text} sub={`/${r.totalStudents}`}/>
       </div>
-      <h3 style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>Correction <span style={{fontSize:10,color:T.textDim,fontWeight:400}}>— cliquez sur un item pour demander pourquoi</span></h3>
-      {curColle.questions.map((q,idx)=>{const sl=curAns[q.id]||[],cr=q.correctAnswers||[];return<div key={q.id} style={crd({marginBottom:5,padding:10})}>
-        <div style={{fontSize:10,color:T.textDim,marginBottom:2}}>Q{idx+1}</div>
+      <h3 style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>Correction <span style={{fontSize:10,color:T.textDim,fontWeight:400}}>— cliquez ❓ pour vérifier, ↕️ pour inverser</span></h3>
+      {Object.keys(corrOverrides).length>0&&<div style={{marginBottom:8}}><Btn onClick={recalcScore} v="primary" sx={{fontSize:11,padding:"6px 14px"}}>🔄 Recalculer ma note ({Object.keys(corrOverrides).length} correction(s) modifiée(s))</Btn></div>}
+      {curColle.questions.map((q,idx)=>{const sl=curAns[q.id]||[],cr=corrOverrides[q.id]||q.correctAnswers||[];return<div key={q.id} style={crd({marginBottom:5,padding:10})}>
+        <div style={{fontSize:10,color:T.textDim,marginBottom:2}}>Q{idx+1} {corrOverrides[q.id]&&<Badge color={T.warn}>MODIFIÉE</Badge>}</div>
         <div style={{fontSize:12,fontWeight:600,color:T.text,marginBottom:6}}>{q.question}</div>
-        {q.type==="QCM"&&q.options?.map((o,i)=>{const ok=cr.includes(i),pk=sl.includes(i),cKey=`${q.id}_${i}`;return<div key={i}>
-          <div onClick={async()=>{
-            if(contestResults[cKey]||contestLoading===cKey)return;
-            setContestLoading(cKey);
-            const courseData=courses.find(c=>c.id===q.courseId);
-            const resp=await contestItem(q,i,o.text,ok,courseData?.content||"");
-            setContestResults(p=>({...p,[cKey]:resp}));
-            setContestLoading(null);
-          }} style={{padding:"4px 8px",marginBottom:contestResults[cKey]?0:2,borderRadius:T.radiusSm,border:`1px solid ${ok?T.accent+"40":pk?T.danger+"40":T.border}`,background:ok?`${T.accent}12`:pk?`${T.danger}12`:"transparent",display:"flex",gap:6,fontSize:11,cursor:"pointer",transition:"all .15s"}}>
-            <span style={{fontWeight:700,color:ok?T.accent:pk?T.danger:T.textDim}}>{o.label}</span><span style={{color:T.text,flex:1}}>{o.text}</span>
+        {q.type==="QCM"&&q.options?.map((o,i)=>{const ok=cr.includes(i),pk=sl.includes(i),cKey=`${q.id}_${i}`,resp=contestResults[cKey]||"",isErronee=resp.toLowerCase().includes("erroné")||resp.toLowerCase().includes("en réalité vrai")||resp.toLowerCase().includes("en réalité faux");return<div key={i}>
+          <div style={{padding:"4px 8px",marginBottom:contestResults[cKey]?0:2,borderRadius:T.radiusSm,border:`1px solid ${ok?T.accent+"40":pk?T.danger+"40":T.border}`,background:ok?`${T.accent}12`:pk?`${T.danger}12`:"transparent",display:"flex",gap:6,fontSize:11,alignItems:"center"}}>
+            <span style={{fontWeight:700,color:ok?T.accent:pk?T.danger:T.textDim}}>{o.label}</span>
+            <span style={{color:T.text,flex:1}}>{o.text}</span>
             {ok&&<span style={{color:T.accent}}>✓</span>}{pk&&!ok&&<span style={{color:T.danger}}>✗</span>}
-            <span style={{color:T.textDim,fontSize:9}}>❓</span>
+            <span onClick={async(e)=>{e.stopPropagation();if(contestResults[cKey]||contestLoading===cKey)return;setContestLoading(cKey);const cd=courses.find(c=>c.id===q.courseId);const rsp=await contestItem(q,i,o.text,ok,cd?.content||"");setContestResults(p=>({...p,[cKey]:rsp}));setContestLoading(null)}} style={{color:T.textDim,fontSize:10,cursor:"pointer",padding:"2px 4px"}}>❓</span>
+            <span onClick={(e)=>{e.stopPropagation();flipItem(q.id,i)}} style={{color:T.warn,fontSize:10,cursor:"pointer",padding:"2px 4px"}} title="Inverser vrai/faux">↕️</span>
           </div>
-          {contestLoading===cKey&&<div style={{padding:"6px 10px",fontSize:10,color:T.textSec}}>⏳ Analyse en cours...</div>}
-          {contestResults[cKey]&&<div style={{padding:"6px 10px",marginBottom:2,borderRadius:T.radiusSm,background:`${T.warn}08`,borderLeft:`2px solid ${T.warn}`,fontSize:10,color:T.text,lineHeight:1.5}}>
-            <span style={{fontWeight:700,color:T.warn}}>🔍 Analyse :</span> {contestResults[cKey]}
+          {contestLoading===cKey&&<div style={{padding:"6px 10px",fontSize:10,color:T.textSec}}>⏳ Vérification dans le cours...</div>}
+          {contestResults[cKey]&&<div style={{padding:"6px 10px",marginBottom:2,borderRadius:T.radiusSm,background:isErronee?`${T.danger}10`:`${T.warn}08`,borderLeft:`2px solid ${isErronee?T.danger:T.warn}`,fontSize:10,color:T.text,lineHeight:1.5}}>
+            <span style={{fontWeight:700,color:isErronee?T.danger:T.warn}}>{isErronee?"⚠️ Correction erronée":"🔍 Analyse"} :</span> {contestResults[cKey]}
+            {isErronee&&<div style={{marginTop:4}}><span onClick={()=>flipItem(q.id,i)} style={{color:T.accent,cursor:"pointer",fontWeight:700,textDecoration:"underline",fontSize:10}}>→ Cliquer ici pour corriger cet item</span></div>}
           </div>}
         </div>})}
         {q.type==="QROC"&&<div style={{fontSize:11}}><span style={{color:T.textSec}}>Vous: </span><span style={{color:T.warn}}>{qrocAns[q.id]||"(vide)"}</span> → <span style={{color:T.accent}}>{q.answer||q.expectedAnswer}</span></div>}
         {q.explanation&&<div style={{marginTop:6,padding:"8px 10px",borderRadius:T.radiusSm,background:`${T.info}10`,borderLeft:`3px solid ${T.info}`}}>
-          <div style={{fontSize:9,color:T.info,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:3}}>📖 Correction — Extrait du cours</div>
+          <div style={{fontSize:9,color:T.info,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:3}}>📖 Extrait du cours</div>
           <div style={{fontSize:11,color:T.text,lineHeight:1.6}}>{q.explanation}</div>
         </div>}
       </div>})}
